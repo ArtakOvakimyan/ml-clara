@@ -67,6 +67,11 @@ separator "Проверки"
 }
 log "✓ CLaRa найден"
 
+if [[ "$CONDA_DEFAULT_ENV" != "clara" ]]; then
+    echo "⚠ Активируй окружение: conda activate clara"
+    exit 1
+fi
+
 if $RUN_STAGE1; then
     [ -f "${STAGE1_DATA}" ] || {
         echo "✗ Данные Stage 1 не найдены: ${STAGE1_DATA}"
