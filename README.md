@@ -111,11 +111,7 @@ bash run_training.sh --stage2_only
 ### Шаг 4. Инференс
 
 ```bash
-python run_inference.py \
-    --checkpoint checkpoints/stage2 \
-    --stage 2 \
-    --question "Ваш вопрос" \
-    --document "Текст документа"
+# TODO
 ```
 
 ---
