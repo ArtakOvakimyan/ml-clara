@@ -154,7 +154,7 @@ class CLaRaConfig(PretrainedConfig):
                  kbtc_training: bool = False,
                  optimize_mem_tokens: bool = False,
                  different_mem_tokens: bool = False,
-                 attn_implementation: str = 'sdpa',
+                 attn_implementation: str = None,
                  _attn_implementation_autoset: bool = True,
                  ae_mode: str = "token",
                  max_new_tokens: int = 128,
@@ -1691,7 +1691,7 @@ if __name__ == '__main__':
         kbtc_training=False,
         optimize_mem_tokens=True,
         different_mem_tokens=True,
-        attn_implementation='sdpa'
+        attn_implementation='flash_attention_2'
     )
     
     # Initialize model

@@ -15,10 +15,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import transformers
-try:
-    import transformers.modeling_flash_attention_utils
-except ImportError:
-    pass
+import transformers.modeling_flash_attention_utils
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from peft import PeftModel, get_peft_model_state_dict
 from torch import distributed as dist
@@ -89,10 +86,7 @@ class DeepspeedStrategy(ABC):
             transformers.enable_full_determinism(self.seed)
             # Use deterministic backward in flash attention as, by default, flash attention uses atomic adds
             # https://github.com/Dao-AILab/flash-attention/commit/732654583c2e640adc012ecb60e460bf19dcd9e3
-            try:
-                transformers.modeling_flash_attention_utils.deterministic_g = True
-            except Exception:
-                pass
+            transformers.modeling_flash_attention_utils.deterministic_g = True
         else:
             transformers.set_seed(self.seed)
 
