@@ -13,11 +13,12 @@
 
 set -e
 
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CLARA_DIR="${PROJECT_DIR}"
 
 # ─── Модель ──────────────────────────────────────────────────
-MODEL_NAME="MODEL_NAME="MilyaShams/T-lite-it-1.0_Q4_0""
+MODEL_NAME="MilyaShams/T-lite-it-1.0_Q4_0"
 
 # ─── Данные ──────────────────────────────────────────────────
 DATA_DIR="${PROJECT_DIR}/rus_data/clara"

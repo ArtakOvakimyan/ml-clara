@@ -4,7 +4,8 @@ set -e
 
 ENV_NAME="clara"
 PYTHON_VERSION="3.10"
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CLARA_DIR="$PROJECT_DIR"
 
 [ -f "${PROJECT_DIR}/openrlhf/cli/train_sft.py" ] || {
@@ -25,7 +26,7 @@ pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
     --index-url https://download.pytorch.org/whl/cu118
 
 # Потом остальное
-pip install -r requirements.txt
+pip install -r "${PROJECT_DIR}/requirements.txt"
 echo "Зависимости установлены"
 
 # 3. Настройка PYTHONPATH
