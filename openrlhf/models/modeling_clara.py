@@ -990,13 +990,13 @@ class CLaRa(PreTrainedModel):
 
     def _blend_qa_prompt(self, docs: str, query: List[str], answer: List[str]) -> Tuple[int, str]:
         """Create QA prompt for stage 1."""
-        prompt_system = 'You are a helpful assistant. Given a document, your task is to generate some single questions to cover all key information of the document and answer them sequentially.'
-        prompt_user = f"Background:\n{docs}"
+        prompt_system = 'Ты — полезный ассистент. Тебе дан документ. Твоя задача — сформулировать несколько вопросов, охватывающих ключевую информацию документа, и последовательно ответить на них.'
+        prompt_user = f"Контекст:\n{docs}"
         
         sys_prompt = [{"role": "system", "content": prompt_system}]
         user_prompt = [{"role": "user", "content": prompt_user.replace(':\ ', ': ')}]
 
-        qa_lines = [f"Question: {q}\nAnswer: {a}" for q, a in zip(query, answer)]
+        qa_lines = [f"Вопрос: {q}\nОтвет: {a}" for q, a in zip(query, answer)]
         query_answer = "\n".join(qa_lines)
         assistant_prompt = [{"role": "assistant", "content": query_answer}]
         
@@ -1031,7 +1031,7 @@ class CLaRa(PreTrainedModel):
 
     def _blend_paraphrase_prompt(self, docs: str, answer: str) -> Tuple[int, str]:
         """Create paraphrase prompt for stage 1."""
-        prompt_system = 'You are a helpful assistant. Your task is follow the instructions to paraphrase the background information.'
+        prompt_system = 'Ты — полезный ассистент. Твоя задача — следовать инструкциям и перефразировать предложенный текст.'
         prompt_user = random.choice(PARAPHRASE_INSTRUCTIONS).format(docs=docs)
 
         sys_prompt = [{"role": "system", "content": prompt_system}]
@@ -1074,7 +1074,7 @@ class CLaRa(PreTrainedModel):
 
     def _blend_standard_prompt(self, docs: str, query: str, answer: str) -> Tuple[int, str]:
         """Create standard prompt for stage 1_2."""
-        prompt_system = 'You are a helpful assistant. Your task is to extract relevant information from provided documents and to answer to questions as briefly as possible.'
+        prompt_system = 'Ты — полезный ассистент. Твоя задача — извлечь нужную информацию из предоставленных документов и ответить на вопрос максимально кратко.'
         # --- Qwen2 patch: convert lists to strings ---
         if isinstance(docs, list):
             docs = "\n".join(docs)
@@ -1082,7 +1082,7 @@ class CLaRa(PreTrainedModel):
             query = query[0] if query else ""
         if isinstance(answer, list):
             answer = answer[0] if answer else ""
-        prompt_user = f"Background:\n{docs}\n\nQuestion:{query}"
+        prompt_user = f"Контекст:\n{docs}\n\nВопрос:{query}"
         
         sys_prompt = [{"role": "system", "content": prompt_system}]
         user_prompt = [{"role": "user", "content": prompt_user.replace(':\ ', ': ')}]
@@ -1127,8 +1127,8 @@ class CLaRa(PreTrainedModel):
         mem_tokens_str = ''.join(self.decoder_tokenizer.mem_tokens) + self.decoder_tokenizer.sep_token
         docs = mem_tokens_str * self.generation_top_k
         
-        prompt_system = 'You are a helpful assistant. Your task is to extract relevant information from provided documents and to answer to questions as briefly as possible.'
-        prompt_user = f"Background:\n{docs}\n\nQuestion:{query}"
+        prompt_system = 'Ты — полезный ассистент. Твоя задача — извлечь нужную информацию из предоставленных документов и ответить на вопрос максимально кратко.'
+        prompt_user = f"Контекст:\n{docs}\n\nВопрос:{query}"
         
         sys_prompt = [{"role": "system", "content": prompt_system}]
         user_prompt = [{"role": "user", "content": prompt_user.replace(':\ ', ': ')}]
