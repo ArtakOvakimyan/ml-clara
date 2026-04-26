@@ -14,17 +14,14 @@ CLARA_DIR="$PROJECT_DIR"
 }
 
 # 1. Conda-окружение
-echo "Создание conda-окружения..."
-conda create -n $ENV_NAME python=$PYTHON_VERSION -y
-eval "$(conda shell.bash hook)"
-conda activate $ENV_NAME
-echo "Python: $(python --version)"
-
 conda clean --all -y
 
 # Создайте окружение с явным указанием канала
-conda create -n myenv python=3.10 -c conda-forge -y
-conda activate myenv
+echo "Создание conda-окружения..."
+conda create -n $ENV_NAME python=3.10 -c conda-forge -y
+eval "$(conda shell.bash hook)"
+conda activate $ENV_NAME
+echo "Python: $(python --version)"
 
 # Зафиксируйте приоритет каналов
 conda config --env --set channel_priority strict
