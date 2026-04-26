@@ -39,19 +39,19 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 # Constants
 IGNORE_INDEX = -100
 PARAPHRASE_INSTRUCTIONS = [
-    'Background: {docs} means the same as',
-    "Background: {docs} Can you put the above sentences in your own terms?",
-    "Background: {docs} Please provide a reinterpretation of the preceding background text.",
-    "These two expressions are equivalent in essence:\n(1) {docs}\n(2)",
-    "Background: {docs} is a paraphrase of what?",
-    "Background: {docs} Could you give me a different version of the background sentences above?",
-    "In other words, background: {docs} is just another way of saying:",
-    "You're getting across the same point whether you say background: {docs} or",
-    "Background: {docs} After unpacking the ideas in the background information above, we got:",
-    "Background: {docs} Please offer a restatement of the background sentences I've just read.",
-    "Background: {docs}, which also means:",
-    "Strip away the mystery, and you'll find background: {docs} is simply another rendition of:",
-    "The essence of background: {docs} is captured again in the following statement:",
+    'Контекст: {docs} означает то же самое, что',
+    'Контекст: {docs} Перефразируй приведённые предложения своими словами.',
+    'Контекст: {docs} Пожалуйста, изложи предшествующий текст иначе.',
+    'Эти два высказывания эквивалентны по смыслу:\n(1) {docs}\n(2)',
+    'Контекст: {docs} Что является парафразом вышесказанного?',
+    'Контекст: {docs} Можешь ли ты предложить другую версию приведённых предложений?',
+    'Иными словами, контекст: {docs} — это просто другой способ сказать:',
+    'Одну и ту же мысль можно выразить так: контекст: {docs} или так:',
+    'Контекст: {docs} После осмысления фоновой информации мы получаем:',
+    'Контекст: {docs} Пожалуйста, перефразируй только что прочитанные предложения.',
+    'Контекст: {docs}, что также означает:',
+    'В основе контекста: {docs} лежит следующее утверждение:',
+    'Суть контекста: {docs} можно выразить иначе:',
 ]
 
 

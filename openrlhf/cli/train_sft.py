@@ -156,8 +156,7 @@ def setup_training_components(args: argparse.Namespace, model: CLaRa, train_data
         args.lr_scheduler,
         optimizer,
         num_warmup_steps=math.ceil(max_steps * args.lr_warmup_ratio),
-        num_training_steps=max_steps,
-        scheduler_specific_kwargs={"min_lr": args.learning_rate * 0.1}
+        num_training_steps=max_steps
     )
 
     # Prepare models with strategy
