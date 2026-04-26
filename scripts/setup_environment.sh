@@ -20,12 +20,29 @@ eval "$(conda shell.bash hook)"
 conda activate $ENV_NAME
 echo "Python: $(python --version)"
 
-# 2. Зависимости
-# Сначала PyTorch с правильным индексом
-pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
-    --index-url https://download.pytorch.org/whl/cu118
+conda clean --all -y
 
-# Потом остальное
+# Создайте окружение с явным указанием канала
+conda create -n myenv python=3.10 -c conda-forge -y
+conda activate myenv
+
+# Зафиксируйте приоритет каналов
+conda config --env --set channel_priority strict
+
+# Для CUDA 12.1 (совместимо с 12.2)
+conda install -c pytorch -c nvidia -c conda-forge \
+    pytorch torchvision torchaudio pytorch-cuda=12.1 -y
+
+# Проверка
+python -c "import torch; print(f'✅ {torch.__version__}, CUDA: {torch.version.cuda}, GPU: {torch.cuda.is_available()}')"
+
+# Зависимости для сборки
+pip install --upgrade pip setuptools wheel ninja psutil packaging
+
+# flash-attn
+pip install flash-attn --no-build-isolation --no-cache-dir
+
+# Остальное
 pip install -r "${PROJECT_DIR}/requirements.txt"
 echo "Зависимости установлены"
 
