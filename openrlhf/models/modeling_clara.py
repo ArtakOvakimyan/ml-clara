@@ -358,7 +358,8 @@ class CLaRa(PreTrainedModel):
                 torch_dtype=torch.bfloat16,
                 resume_download=True,
                 trust_remote_code=True,
-                device_map=cfg.device_map
+                device_map=cfg.device_map,
+                attn_implementation=cfg.attn_implementation
             )
         
         if cfg.quantization == "no":
@@ -381,7 +382,7 @@ class CLaRa(PreTrainedModel):
                 torch_dtype=torch.bfloat16,
                 resume_download=True,
                 trust_remote_code=True,
-                device_map=cfg.device_map
+                device_map=cfg.device_map,
             )
         elif cfg.quantization == "int8":
             quant_config = BitsAndBytesConfig(
@@ -484,13 +485,17 @@ class CLaRa(PreTrainedModel):
         tokenizer.sep_token_id = tokenizer.convert_tokens_to_ids('<SEP>')
         
         # Handle model-specific tokens
+        # Use hardcoded Qwen/T-Lite chat tokens instead of additional_special_tokens[0/1]:
+        # if there are no pre-existing additional_special_tokens (e.g. T-Lite-2.1 / Qwen3),
+        # indices [0] and [1] would point to <MEM0>/<MEM1>, making eos_token a memory token
+        # and causing generation to stop immediately (empty output).
         if tokenizer.bos_token is None and ('qwen' in cfg.decoder_model_name.lower() or 't-lite' in cfg.decoder_model_name.lower()):
-            tokenizer.bos_token = tokenizer.special_tokens_map['additional_special_tokens'][0]
-            tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids(tokenizer.bos_token)
-        
+            tokenizer.bos_token = "<|im_start|>"
+            tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids("<|im_start|>")
+
         if tokenizer.eos_token is None and ('qwen' in cfg.decoder_model_name.lower() or 't-lite' in cfg.decoder_model_name.lower()):
-            tokenizer.eos_token = tokenizer.special_tokens_map['additional_special_tokens'][1]
-            tokenizer.eos_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eos_token)
+            tokenizer.eos_token = "<|im_end|>"
+            tokenizer.eos_token_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
 
         # KBTC training tokens
         if cfg.kbtc_training:
@@ -548,6 +553,9 @@ class CLaRa(PreTrainedModel):
         
         if 'encoder_adapter' in self.adapter_keys:
             self.decoder.set_adapter('encoder_adapter')
+        elif 'decoder_adapter' in self.adapter_keys:
+            # encoder_adapter not saved in stage2 checkpoint — fall back to decoder_adapter
+            self.decoder.set_adapter('decoder_adapter')
         else:
             raise ValueError(f"encoder_adapter not in adapter_keys: {self.adapter_keys}")
 
@@ -800,6 +808,21 @@ class CLaRa(PreTrainedModel):
         )
         dec_input_ids = inp_dec['input_ids'].to(device)
         dec_attention_mask = inp_dec['attention_mask'].to(device)
+
+        # --- DEBUG: check memory token presence ---
+        mem0_id = self.decoder_tokenizer.mem_token_ids[0]
+        mem0_present = (dec_input_ids == mem0_id).any().item()
+        print(f"[DEBUG] mem_token_ids[:3]={self.decoder_tokenizer.mem_token_ids[:3]}")
+        print(f"[DEBUG] dec_input_ids shape={dec_input_ids.shape}, MEM0 ({mem0_id}) present={mem0_present}")
+        if not mem0_present:
+            # Show which token ids appear in dec_input_ids that are >= vocab_size_without_special
+            unique_ids = dec_input_ids[0].unique().tolist()
+            high_ids = [t for t in unique_ids if t >= 151643]  # Qwen3 vocab starts specials here
+            print(f"[DEBUG] High token ids in dec_input_ids: {high_ids}")
+            decoded_prompt = self.decoder_tokenizer.decode(dec_input_ids[0])
+            print(f"[DEBUG] Decoded dec_input_ids[:200]: {decoded_prompt[:200]}")
+        # -----------------------------------------
+
         
         # Generate
         return self._generate({
@@ -1219,8 +1242,10 @@ class CLaRa(PreTrainedModel):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         """Load model from pretrained checkpoint."""
-        # Load configuration
-        config = CLaRaConfig.from_pretrained(pretrained_model_name_or_path)
+        # Load config directly from json to avoid trust_remote_code prompt
+        # (CLaRaConfig has auto_map which triggers the check when using from_pretrained)
+        config_path = os.path.join(pretrained_model_name_or_path, "config.json")
+        config = CLaRaConfig.from_json_file(config_path)
         
         # Update config with kwargs
         for key, value in kwargs.items():
@@ -1272,8 +1297,11 @@ class CLaRa(PreTrainedModel):
                 adapters_path = os.path.join(pretrained_model_name_or_path, "adapters.pth")
     
             if os.path.exists(adapters_path):
+                print(f'[DEBUG] Loading adapters from: {adapters_path}')
                 adapters_state_dict = torch.load(adapters_path, map_location=map_location, weights_only=True)
+                print(f'[DEBUG] adapters.pth keys: {list(adapters_state_dict.keys())}')
                 model._load_adapters_from_state_dict(adapters_state_dict, peft_config, config)
+                print(f'[DEBUG] adapter_keys after load: {model.adapter_keys}')
             else:
                 warnings.warn(f'Adapters not found at {adapters_path}')
 
@@ -1313,14 +1341,47 @@ class CLaRa(PreTrainedModel):
             self._handle_query_reasoner_adapter_loading(adapters_state_dict, peft_config)
 
     def _load_adapter_from_state_dict(self, peft_config: LoraConfig, adapter_name: str, adapter_state_dict: Dict):
-        """Create adapter from state dict."""
+        """Create adapter from state dict with key-format-agnostic loading.
+
+        In transformers >=5.x, LoRA parameter names embed the adapter name:
+          model.layers.0.q_proj.lora_A.decoder_adapter.weight
+        But adapters.pth was saved with old PEFT format (no adapter name in key):
+          layers.0.q_proj.lora_A.weight
+        We use add_adapter to create the structure, then copy weights directly.
+        """
         print(f'Loading checkpoint adapter: {adapter_name}')
-        self.decoder.load_adapter(
-            peft_config=peft_config, 
-            adapter_name=adapter_name, 
-            adapter_state_dict=adapter_state_dict
-        )
+        self.decoder.add_adapter(peft_config, adapter_name)
         self.adapter_keys.append(adapter_name)
+
+        # Build lookup: normalized_key -> (name, param) for this adapter
+        # Normalize by stripping "model." prefix and the adapter name itself
+        def _norm(key: str) -> str:
+            for prefix in ("base_model.model.model.", "base_model.model.", "model."):
+                if key.startswith(prefix):
+                    key = key[len(prefix):]
+                    break
+            key = key.replace(f".{adapter_name}.", ".")
+            return key
+
+        model_params = {_norm(n): (n, p) for n, p in self.decoder.named_parameters()
+                        if adapter_name in n}
+
+        loaded, skipped = 0, 0
+        for saved_key, value in adapter_state_dict.items():
+            norm = _norm(saved_key)
+            if norm in model_params:
+                full_name, param = model_params[norm]
+                param.data.copy_(value.to(dtype=param.dtype, device=param.device))
+                loaded += 1
+            else:
+                skipped += 1
+
+        print(f'  Loaded {loaded}/{len(adapter_state_dict)} weights for {adapter_name}'
+              + (f', skipped {skipped}' if skipped else ''))
+        if skipped:
+            skipped_keys = [k for k in adapter_state_dict if _norm(k) not in model_params]
+            print(f'  Skipped keys: {skipped_keys}')
+
 
     def _handle_query_reasoner_adapter_loading(self, adapters_state_dict: Dict, peft_config: LoraConfig):
         """Handle special loading logic for query reasoner adapter."""
@@ -1651,7 +1712,27 @@ class CLaRa(PreTrainedModel):
         assert enc_input_ids.size(0) == dec_input_ids.size(0) * self.generation_top_k
             
         compressed_embs, _ = self.compress(enc_input_ids.to('cuda'), enc_attention_mask.to('cuda'))
+
+        # --- DEBUG compression quality ---
+        print(f"[DEBUG] compressed_embs shape={compressed_embs.shape}")
+        print(f"[DEBUG] compressed_embs norm={compressed_embs.norm(dim=-1).mean().item():.4f}, "
+              f"std={compressed_embs.std().item():.4f}")
+        # ---------------------------------
+
         inputs_embeds = self._replace_emb(compressed_embs, dec_input_ids.to('cuda'))
+
+        # --- DEBUG replacement ---
+        dec_ids_cpu = dec_input_ids[0].cpu()
+        mem0_id = self.decoder_tokenizer.mem_token_ids[0]
+        mem0_pos = (dec_ids_cpu == mem0_id).nonzero(as_tuple=True)[0]
+        mem0_pos_val = mem0_pos[0].item() if len(mem0_pos) > 0 else -1
+        orig_emb = self.decoder.get_input_embeddings()(dec_ids_cpu[:1].to('cuda'))
+        replaced_norm = inputs_embeds[0, mem0_pos_val].norm().item() if mem0_pos_val >= 0 else -1
+        orig_norm = orig_emb[0, 0].norm().item()
+        print(f"[DEBUG] MEM0 position in dec_input_ids: {mem0_pos_val}")
+        print(f"[DEBUG] Embedding norm at MEM0 pos after replace: {replaced_norm:.4f} "
+              f"(original token emb norm: {orig_norm:.4f})")
+        # -------------------------
         
         if 'decoder_adapter' in self.adapter_keys:
             self.decoder.set_adapter('decoder_adapter') 
@@ -1665,6 +1746,7 @@ class CLaRa(PreTrainedModel):
         )
 
         decoded = self.decoder_tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+
         
         if return_doc_embeddings:
             assert 'batch_size' in locals() and 'top_k' in locals()
@@ -1678,7 +1760,7 @@ class CLaRa(PreTrainedModel):
 if __name__ == '__main__':
     # Example configuration
     cfg = CLaRaConfig(
-        decoder_model_name='MilyaShams/T-lite-it-1.0_Q4_0',
+        decoder_model_name='t-tech/T-lite-it-1.0',
         compr_model_name="mistral_trimmed",
         compr_rate=64,
         compr_n_layers=5,

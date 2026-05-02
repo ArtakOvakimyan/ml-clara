@@ -18,7 +18,7 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CLARA_DIR="${PROJECT_DIR}"
 
 # ─── Модель ──────────────────────────────────────────────────
-MODEL_NAME="MilyaShams/T-lite-it-1.0_Q4_0"
+MODEL_NAME="tech/T-lite-it-2.1-FP8"
 
 # ─── Данные ──────────────────────────────────────────────────
 DATA_DIR="${PROJECT_DIR}/rus_data/clara"
