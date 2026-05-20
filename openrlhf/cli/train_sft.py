@@ -47,7 +47,7 @@ def create_clara_config(args: argparse.Namespace) -> CLaRaConfig:
         training_form="both_separately",
         training_stage=args.stage,
         sep=True,
-        attn_implementation='flash_attention_2',
+        attn_implementation='sdpa',
         stage2_retrieval_top_n=args.stage2_retrieval_top_n,
         pure_inference=args.pure_inference
     )
@@ -156,7 +156,8 @@ def setup_training_components(args: argparse.Namespace, model: CLaRa, train_data
         args.lr_scheduler,
         optimizer,
         num_warmup_steps=math.ceil(max_steps * args.lr_warmup_ratio),
-        num_training_steps=max_steps
+        num_training_steps=max_steps,
+        scheduler_specific_kwargs={"min_lr": args.learning_rate * 0.1}
     )
 
     # Prepare models with strategy

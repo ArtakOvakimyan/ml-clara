@@ -154,7 +154,7 @@ class CLaRaConfig(PretrainedConfig):
                  kbtc_training: bool = False,
                  optimize_mem_tokens: bool = False,
                  different_mem_tokens: bool = False,
-                 attn_implementation: str = None,
+                 attn_implementation: str = 'sdpa',
                  _attn_implementation_autoset: bool = True,
                  ae_mode: str = "token",
                  max_new_tokens: int = 128,
@@ -893,8 +893,8 @@ class CLaRa(PreTrainedModel):
             texts_to_encode = [
                 self.decoder_tokenizer.enc_token + 
                 self.decoder_tokenizer.bos_token + 
-                '\nQuery:\n' + query + 
-                'Document:\n' + text + 
+                '\nВопрос:\n' + query + 
+                'Контекст:\n' + text + 
                 self.decoder_tokenizer.eos_token 
                 for text, query in zip(texts, q_texts)
             ]
@@ -907,11 +907,11 @@ class CLaRa(PreTrainedModel):
                 add_special_tokens=False
             )
         else:
+            bos = str(self.decoder_tokenizer.bos_token or '')
+            eos = str(self.decoder_tokenizer.eos_token or '')
+            enc = str(self.decoder_tokenizer.enc_token or '')
             inp_enc = [
-                self.decoder_tokenizer.enc_token + 
-                self.decoder_tokenizer.bos_token + 
-                text + 
-                self.decoder_tokenizer.eos_token 
+                enc + bos + str(text) + eos 
                 for text in texts
             ]
             inp_enc = self.decoder_tokenizer(
@@ -1028,24 +1028,26 @@ class CLaRa(PreTrainedModel):
                 sys_prompt + user_prompt, 
                 tokenize=False, 
                 add_generation_prompt=True, 
+                enable_thinking=False
             )
             response = self.decoder_tokenizer.apply_chat_template(
                 sys_prompt + user_prompt + assistant_prompt, 
                 tokenize=False, 
                 add_generation_prompt=False, 
+                enable_thinking=False
             )
             prompt_len = len(self.decoder_tokenizer.encode(prompt, add_special_tokens=False))
         except TemplateError as e:
             if "System role not supported" in str(e):
                 messages = [{"role": "user", "content": sys_prompt[0]['content'] + '\n' + user_prompt[0]['content']}]
                 prompt = self.decoder_tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
+                    messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
                 )
                 prompt_len = len(self.decoder_tokenizer.encode(prompt, add_special_tokens=False))
                 # Handle response for unsupported system role
                 messages_with_answer = messages + assistant_prompt
                 response = self.decoder_tokenizer.apply_chat_template(
-                    messages_with_answer, tokenize=False, add_generation_prompt=False
+                    messages_with_answer, tokenize=False, add_generation_prompt=False, enable_thinking=False
                 )
             else:
                 raise e
@@ -1064,7 +1066,8 @@ class CLaRa(PreTrainedModel):
             prompt = self.decoder_tokenizer.apply_chat_template(
                 sys_prompt + user_prompt, 
                 tokenize=False, 
-                add_generation_prompt=True, 
+                add_generation_prompt=True,
+                enable_thinking=False
             )
             if answer is None:
                 return prompt
@@ -1074,6 +1077,7 @@ class CLaRa(PreTrainedModel):
                 sys_prompt + user_prompt + assistant_prompt, 
                 tokenize=False, 
                 add_generation_prompt=False, 
+                enable_thinking=False
             )
             prompt_len = len(self.decoder_tokenizer.encode(prompt, add_special_tokens=False))
         except TemplateError as e:
@@ -1081,14 +1085,14 @@ class CLaRa(PreTrainedModel):
                 combined_content = prompt_system + '\n' + prompt_user.replace(':\ ', ': ')
                 messages = [{"role": "user", "content": combined_content}]
                 prompt = self.decoder_tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
+                    messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
                 )
                 if answer is None:
                     return prompt
                 prompt_len = len(self.decoder_tokenizer.encode(prompt, add_special_tokens=False))
                 messages_with_answer = messages + [{"role": "assistant", "content": answer}]
                 response = self.decoder_tokenizer.apply_chat_template(
-                    messages_with_answer, tokenize=False, add_generation_prompt=False
+                    messages_with_answer, tokenize=False, add_generation_prompt=False, enable_thinking=False
                 )
             else:
                 raise e
@@ -1114,7 +1118,8 @@ class CLaRa(PreTrainedModel):
             prompt = self.decoder_tokenizer.apply_chat_template(
                 sys_prompt + user_prompt, 
                 tokenize=False, 
-                add_generation_prompt=True, 
+                add_generation_prompt=True,
+                enable_thinking=False
             )
             if answer is None:
                 return prompt
@@ -1124,6 +1129,7 @@ class CLaRa(PreTrainedModel):
                 sys_prompt + user_prompt + assistant_prompt, 
                 tokenize=False, 
                 add_generation_prompt=False, 
+                enable_thinking=False
             )
             prompt_len = len(self.decoder_tokenizer.encode(prompt, add_special_tokens=False))
         except TemplateError as e:
@@ -1131,14 +1137,14 @@ class CLaRa(PreTrainedModel):
                 combined_content = prompt_system + '\n' + prompt_user.replace(':\ ', ': ')
                 messages = [{"role": "user", "content": combined_content}]
                 prompt = self.decoder_tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
+                    messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
                 )
                 if answer is None:
                     return prompt
                 prompt_len = len(self.decoder_tokenizer.encode(prompt, add_special_tokens=False))
                 messages_with_answer = messages + [{"role": "assistant", "content": answer}]
                 response = self.decoder_tokenizer.apply_chat_template(
-                    messages_with_answer, tokenize=False, add_generation_prompt=False
+                    messages_with_answer, tokenize=False, add_generation_prompt=False, enable_thinking=False
                 )
             else:
                 raise e
@@ -1160,7 +1166,8 @@ class CLaRa(PreTrainedModel):
             prompt = self.decoder_tokenizer.apply_chat_template(
                 sys_prompt + user_prompt, 
                 tokenize=False, 
-                add_generation_prompt=True, 
+                add_generation_prompt=True,
+                enable_thinking=False
             )
             prompt_len = len(self.decoder_tokenizer.encode(prompt, add_special_tokens=False))
             
@@ -1169,7 +1176,8 @@ class CLaRa(PreTrainedModel):
                 response = self.decoder_tokenizer.apply_chat_template(
                     sys_prompt + user_prompt + assistant_prompt, 
                     tokenize=False, 
-                    add_generation_prompt=False
+                    add_generation_prompt=False,
+                    enable_thinking=False
                 )
             else:
                 response = prompt
@@ -1183,6 +1191,7 @@ class CLaRa(PreTrainedModel):
                     messages, 
                     tokenize=False, 
                     add_generation_prompt=True, 
+                    enable_thinking=False
                 )
                 prompt_len = len(self.decoder_tokenizer.encode(prompt, add_special_tokens=False))
                 
@@ -1192,6 +1201,7 @@ class CLaRa(PreTrainedModel):
                         messages_with_answer, 
                         tokenize=False, 
                         add_generation_prompt=False, 
+                        enable_thinking=False
                     )
                 else:
                     response = prompt
@@ -1760,11 +1770,13 @@ class CLaRa(PreTrainedModel):
 if __name__ == '__main__':
     # Example configuration
     cfg = CLaRaConfig(
-        decoder_model_name='t-tech/T-lite-it-1.0',
+        # decoder_model_name='t-tech/T-lite-it-1.0',
+        decoder_model_name='Qwen/Qwen3-0.6B',
         compr_model_name="mistral_trimmed",
         compr_rate=64,
         compr_n_layers=5,
-        compr_mlp_hidden_dim=7168,
+        # compr_mlp_hidden_dim=7168,
+        compr_mlp_hidden_dim=2048,
         compr_use_mlp=False, 
         lora=True,
         lora_compressor=True,
