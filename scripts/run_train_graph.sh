@@ -35,8 +35,8 @@ COMPRESS_RATE=16
 DOC_MAX_LENGTH=256
 
 # ─── Параметры обучения ──────────────────────────────────────
-BATCH_SIZE_PER_GPU=2      # 1?
-TRAIN_BATCH_SIZE=16       # 8?
+BATCH_SIZE_PER_GPU=4      # 1?
+TRAIN_BATCH_SIZE=32       # 8?
 LEARNING_RATE=1e-3
 MAX_LEN=1024              # 512?
 ZERO_STAGE=2
@@ -121,7 +121,7 @@ if $RUN_STAGE1; then
         --max_len ${MAX_LEN} \
         --micro_train_batch_size ${BATCH_SIZE_PER_GPU} \
         --train_batch_size ${TRAIN_BATCH_SIZE} \
-        --max_epochs 10 \
+        --max_epochs 20 \
         --learning_rate ${LEARNING_RATE} \
         --lr_scheduler cosine \
         --lr_warmup_ratio 0.05 \
@@ -138,6 +138,10 @@ if $RUN_STAGE1; then
         --doc_max_length ${DOC_MAX_LENGTH} \
         --mse_loss \
         --qa_loss \
+        --use_wandb key \
+        --wandb_org vangordensteeby479-ural-federal-university \
+        --wandb_project my-awesome-project \
+        --wandb_run_name test1 \
         2>&1 | tee "${STAGE1_CHECKPOINT}/train_stage1.log"
 
     STAGE1_END=$(date +%s)
@@ -162,7 +166,7 @@ if $RUN_STAGE2; then
         --max_len ${MAX_LEN} \
         --micro_train_batch_size ${BATCH_SIZE_PER_GPU} \
         --train_batch_size ${TRAIN_BATCH_SIZE} \
-        --max_epochs 10 \
+        --max_epochs 6 \
         --learning_rate ${LEARNING_RATE} \
         --lr_scheduler cosine \
         --lr_warmup_ratio 0.05 \
@@ -172,7 +176,7 @@ if $RUN_STAGE2; then
         --bf16 \
         --gradient_checkpointing \
         --save_steps 200 \
-        --eval_steps 50 \
+        --eval_steps 5 \
         --logging_steps 10 \
         --stage stage1_2 \
         --compress_rate ${COMPRESS_RATE} \
@@ -180,6 +184,11 @@ if $RUN_STAGE2; then
         --generation_top_k 1 \
         --mse_loss \
         --do_eval_gen \
+        --eval_dataset ./rus_data/clara/stage2_instruction.jsonl \
+        --use_wandb key \
+        --wandb_org vangordensteeby479-ural-federal-university \
+        --wandb_project my-awesome-project \
+        --wandb_run_name test2 \
         2>&1 | tee "${STAGE2_CHECKPOINT}/train_stage2.log"
 
     STAGE2_END=$(date +%s)

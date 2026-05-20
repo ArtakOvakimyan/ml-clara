@@ -2,7 +2,7 @@
 
 set -e
 
-ENV_NAME="clara"
+ENV_NAME="clara-qwen2"
 PYTHON_VERSION="3.10"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"

@@ -12,6 +12,8 @@
 # =============================================================================
 
 set -e
+# export NCCL_DEBUG=INFO
+
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -19,27 +21,37 @@ CLARA_DIR="${PROJECT_DIR}"
 
 # ─── Модель ──────────────────────────────────────────────────
 # MODEL_NAME="t-tech/T-lite-it-1.0"
-MODEL_NAME="Qwen/Qwen2-0.5B-Instruct"
-
+MODEL_NAME="Qwen/Qwen3-0.6B"
+# --l2 0.01 \
 # ─── Данные ──────────────────────────────────────────────────
 DATA_DIR="${PROJECT_DIR}/rus_data/clara"
 STAGE1_DATA="${DATA_DIR}/stage1_pretrain.jsonl"
 STAGE2_DATA="${DATA_DIR}/stage2_instruction.jsonl"
 
 # ─── Чекпоинты ───────────────────────────────────────────────
-STAGE1_CHECKPOINT="${PROJECT_DIR}/checkpoints_test_graph/stage1"
-STAGE2_CHECKPOINT="${PROJECT_DIR}/checkpoints_test_graph/stage2"
+STAGE1_CHECKPOINT="${PROJECT_DIR}/checkpoint_full_epochs_fulltry_3e4/stage1"
+STAGE2_CHECKPOINT="${PROJECT_DIR}/checkpoint_full_epochs_fulltry_3e4/stage2"
+
+STAGE1_VAL_DATA="${DATA_DIR}/stage1_val.jsonl"
+STAGE2_VAL_DATA="${DATA_DIR}/stage2_val.jsonl"
 
 # ─── Параметры CLaRa ─────────────────────────────────────────
 COMPRESS_RATE=16
 DOC_MAX_LENGTH=256
-
 # ─── Параметры обучения ──────────────────────────────────────
-BATCH_SIZE_PER_GPU=2      # 1?
-TRAIN_BATCH_SIZE=16       # 8?
-LEARNING_RATE=1e-3
+BATCH_SIZE_PER_GPU=4      # 1?
+TRAIN_BATCH_SIZE=28
+# LEARNING_RATE=1e-3
+LEARNING_RATE=3e-4
 MAX_LEN=1024              # 512?
 ZERO_STAGE=2
+
+# ─── Eval steps ──────────────────────────────────────
+# После блока Stage 1 DATA, добавь:
+N_SAMPLES_S1=$(wc -l < "${STAGE1_DATA}")
+N_SAMPLES_S2=$(wc -l < "${STAGE2_DATA}")
+EVAL_STEPS_S1=$(( N_SAMPLES_S1 / TRAIN_BATCH_SIZE / 2))
+EVAL_STEPS_S2=$(( N_SAMPLES_S2 / TRAIN_BATCH_SIZE / 2))
 
 # ─── Флаги из аргументов ─────────────────────────────────────
 RUN_STAGE1=true
@@ -113,7 +125,7 @@ if $RUN_STAGE1; then
 
     STAGE1_START=$(date +%s)
 
-    deepspeed --num_gpus 1 \
+    deepspeed --num_gpus 7 \
         "${CLARA_DIR}/openrlhf/cli/train_sft.py" \
         --pretrain "${MODEL_NAME}" \
         --dataset "${STAGE1_DATA}" \
@@ -123,21 +135,26 @@ if $RUN_STAGE1; then
         --train_batch_size ${TRAIN_BATCH_SIZE} \
         --max_epochs 10 \
         --learning_rate ${LEARNING_RATE} \
-        --lr_scheduler cosine \
-        --lr_warmup_ratio 0.05 \
-        --l2 0.01 \
+        --lr_warmup_ratio 0.01 \
+        --lr_scheduler cosine_with_min_lr  \
         --adam_betas 0.9 0.95 \
         --zero_stage ${ZERO_STAGE} \
         --bf16 \
         --gradient_checkpointing \
         --save_steps 500 \
-        --eval_steps 100 \
+        --eval_steps ${EVAL_STEPS_S1} \
         --logging_steps 10 \
         --stage stage1 \
         --compress_rate ${COMPRESS_RATE} \
         --doc_max_length ${DOC_MAX_LENGTH} \
         --mse_loss \
         --qa_loss \
+        --do_eval_gen \
+        --eval_dataset ${STAGE1_VAL_DATA} \
+        --use_wandb key \
+        --wandb_org vangordensteeby479-ural-federal-university \
+        --wandb_project my-awesome-project \
+        --wandb_run_name full3e4trystage1 \
         2>&1 | tee "${STAGE1_CHECKPOINT}/train_stage1.log"
 
     STAGE1_END=$(date +%s)
@@ -153,7 +170,7 @@ if $RUN_STAGE2; then
 
     STAGE2_START=$(date +%s)
 
-    deepspeed --num_gpus 1 \
+    deepspeed --num_gpus 7 \
         "${CLARA_DIR}/openrlhf/cli/train_sft.py" \
         --pretrain "${MODEL_NAME}" \
         --pretrain_checkpoint "${STAGE1_CHECKPOINT}" \
@@ -162,17 +179,16 @@ if $RUN_STAGE2; then
         --max_len ${MAX_LEN} \
         --micro_train_batch_size ${BATCH_SIZE_PER_GPU} \
         --train_batch_size ${TRAIN_BATCH_SIZE} \
-        --max_epochs 10 \
+        --max_epochs 8 \
         --learning_rate ${LEARNING_RATE} \
-        --lr_scheduler cosine \
-        --lr_warmup_ratio 0.05 \
-        --l2 0.01 \
+        --lr_scheduler cosine_with_min_lr \
+        --lr_warmup_ratio 0.01 \
         --adam_betas 0.9 0.95 \
         --zero_stage ${ZERO_STAGE} \
         --bf16 \
         --gradient_checkpointing \
         --save_steps 200 \
-        --eval_steps 50 \
+        --eval_steps ${EVAL_STEPS_S2} \
         --logging_steps 10 \
         --stage stage1_2 \
         --compress_rate ${COMPRESS_RATE} \
@@ -180,6 +196,11 @@ if $RUN_STAGE2; then
         --generation_top_k 1 \
         --mse_loss \
         --do_eval_gen \
+        --eval_dataset ${STAGE2_VAL_DATA} \
+        --use_wandb key \
+        --wandb_org vangordensteeby479-ural-federal-university \
+        --wandb_project my-awesome-project \
+        --wandb_run_name full3e4trystage2 \
         2>&1 | tee "${STAGE2_CHECKPOINT}/train_stage2.log"
 
     STAGE2_END=$(date +%s)
