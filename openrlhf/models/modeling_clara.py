@@ -39,19 +39,19 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 # Constants
 IGNORE_INDEX = -100
 PARAPHRASE_INSTRUCTIONS = [
-    'Background: {docs} means the same as',
-    "Background: {docs} Can you put the above sentences in your own terms?",
-    "Background: {docs} Please provide a reinterpretation of the preceding background text.",
-    "These two expressions are equivalent in essence:\n(1) {docs}\n(2)",
-    "Background: {docs} is a paraphrase of what?",
-    "Background: {docs} Could you give me a different version of the background sentences above?",
-    "In other words, background: {docs} is just another way of saying:",
-    "You're getting across the same point whether you say background: {docs} or",
-    "Background: {docs} After unpacking the ideas in the background information above, we got:",
-    "Background: {docs} Please offer a restatement of the background sentences I've just read.",
-    "Background: {docs}, which also means:",
-    "Strip away the mystery, and you'll find background: {docs} is simply another rendition of:",
-    "The essence of background: {docs} is captured again in the following statement:",
+    'Контекст: {docs} означает то же самое, что',
+    'Контекст: {docs} Перефразируй приведённые предложения своими словами.',
+    'Контекст: {docs} Пожалуйста, изложи предшествующий текст иначе.',
+    'Эти два высказывания эквивалентны по смыслу:\n(1) {docs}\n(2)',
+    'Контекст: {docs} Что является парафразом вышесказанного?',
+    'Контекст: {docs} Можешь ли ты предложить другую версию приведённых предложений?',
+    'Иными словами, контекст: {docs} — это просто другой способ сказать:',
+    'Одну и ту же мысль можно выразить так: контекст: {docs} или так:',
+    'Контекст: {docs} После осмысления фоновой информации мы получаем:',
+    'Контекст: {docs} Пожалуйста, перефразируй только что прочитанные предложения.',
+    'Контекст: {docs}, что также означает:',
+    'В основе контекста: {docs} лежит следующее утверждение:',
+    'Суть контекста: {docs} можно выразить иначе:',
 ]
 
 
@@ -154,7 +154,7 @@ class CLaRaConfig(PretrainedConfig):
                  kbtc_training: bool = False,
                  optimize_mem_tokens: bool = False,
                  different_mem_tokens: bool = False,
-                 attn_implementation: str = None,
+                 attn_implementation: str = 'sdpa',
                  _attn_implementation_autoset: bool = True,
                  ae_mode: str = "token",
                  max_new_tokens: int = 128,
@@ -358,7 +358,8 @@ class CLaRa(PreTrainedModel):
                 torch_dtype=torch.bfloat16,
                 resume_download=True,
                 trust_remote_code=True,
-                device_map=cfg.device_map
+                device_map=cfg.device_map,
+                attn_implementation=cfg.attn_implementation
             )
         
         if cfg.quantization == "no":
@@ -381,7 +382,7 @@ class CLaRa(PreTrainedModel):
                 torch_dtype=torch.bfloat16,
                 resume_download=True,
                 trust_remote_code=True,
-                device_map=cfg.device_map
+                device_map=cfg.device_map,
             )
         elif cfg.quantization == "int8":
             quant_config = BitsAndBytesConfig(
@@ -484,13 +485,17 @@ class CLaRa(PreTrainedModel):
         tokenizer.sep_token_id = tokenizer.convert_tokens_to_ids('<SEP>')
         
         # Handle model-specific tokens
-        if tokenizer.bos_token is None and 'qwen' in cfg.decoder_model_name.lower():
-            tokenizer.bos_token = tokenizer.special_tokens_map['additional_special_tokens'][0]
-            tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids(tokenizer.bos_token)
-        
-        if tokenizer.eos_token is None and "qwen" in cfg.decoder_model_name.lower():
-            tokenizer.eos_token = tokenizer.special_tokens_map['additional_special_tokens'][1]
-            tokenizer.eos_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eos_token)
+        # Use hardcoded Qwen/T-Lite chat tokens instead of additional_special_tokens[0/1]:
+        # if there are no pre-existing additional_special_tokens (e.g. T-Lite-2.1 / Qwen3),
+        # indices [0] and [1] would point to <MEM0>/<MEM1>, making eos_token a memory token
+        # and causing generation to stop immediately (empty output).
+        if tokenizer.bos_token is None and ('qwen' in cfg.decoder_model_name.lower() or 't-lite' in cfg.decoder_model_name.lower()):
+            tokenizer.bos_token = "<|im_start|>"
+            tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids("<|im_start|>")
+
+        if tokenizer.eos_token is None and ('qwen' in cfg.decoder_model_name.lower() or 't-lite' in cfg.decoder_model_name.lower()):
+            tokenizer.eos_token = "<|im_end|>"
+            tokenizer.eos_token_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
 
         # KBTC training tokens
         if cfg.kbtc_training:
@@ -548,6 +553,9 @@ class CLaRa(PreTrainedModel):
         
         if 'encoder_adapter' in self.adapter_keys:
             self.decoder.set_adapter('encoder_adapter')
+        elif 'decoder_adapter' in self.adapter_keys:
+            # encoder_adapter not saved in stage2 checkpoint — fall back to decoder_adapter
+            self.decoder.set_adapter('decoder_adapter')
         else:
             raise ValueError(f"encoder_adapter not in adapter_keys: {self.adapter_keys}")
 
@@ -800,6 +808,21 @@ class CLaRa(PreTrainedModel):
         )
         dec_input_ids = inp_dec['input_ids'].to(device)
         dec_attention_mask = inp_dec['attention_mask'].to(device)
+
+        # --- DEBUG: check memory token presence ---
+        mem0_id = self.decoder_tokenizer.mem_token_ids[0]
+        mem0_present = (dec_input_ids == mem0_id).any().item()
+        print(f"[DEBUG] mem_token_ids[:3]={self.decoder_tokenizer.mem_token_ids[:3]}")
+        print(f"[DEBUG] dec_input_ids shape={dec_input_ids.shape}, MEM0 ({mem0_id}) present={mem0_present}")
+        if not mem0_present:
+            # Show which token ids appear in dec_input_ids that are >= vocab_size_without_special
+            unique_ids = dec_input_ids[0].unique().tolist()
+            high_ids = [t for t in unique_ids if t >= 151643]  # Qwen3 vocab starts specials here
+            print(f"[DEBUG] High token ids in dec_input_ids: {high_ids}")
+            decoded_prompt = self.decoder_tokenizer.decode(dec_input_ids[0])
+            print(f"[DEBUG] Decoded dec_input_ids[:200]: {decoded_prompt[:200]}")
+        # -----------------------------------------
+
         
         # Generate
         return self._generate({
@@ -870,8 +893,8 @@ class CLaRa(PreTrainedModel):
             texts_to_encode = [
                 self.decoder_tokenizer.enc_token + 
                 self.decoder_tokenizer.bos_token + 
-                '\nQuery:\n' + query + 
-                'Document:\n' + text + 
+                '\nВопрос:\n' + query + 
+                'Контекст:\n' + text + 
                 self.decoder_tokenizer.eos_token 
                 for text, query in zip(texts, q_texts)
             ]
@@ -884,11 +907,11 @@ class CLaRa(PreTrainedModel):
                 add_special_tokens=False
             )
         else:
+            bos = str(self.decoder_tokenizer.bos_token or '')
+            eos = str(self.decoder_tokenizer.eos_token or '')
+            enc = str(self.decoder_tokenizer.enc_token or '')
             inp_enc = [
-                self.decoder_tokenizer.enc_token + 
-                self.decoder_tokenizer.bos_token + 
-                text + 
-                self.decoder_tokenizer.eos_token 
+                enc + bos + str(text) + eos 
                 for text in texts
             ]
             inp_enc = self.decoder_tokenizer(
@@ -990,13 +1013,13 @@ class CLaRa(PreTrainedModel):
 
     def _blend_qa_prompt(self, docs: str, query: List[str], answer: List[str]) -> Tuple[int, str]:
         """Create QA prompt for stage 1."""
-        prompt_system = 'You are a helpful assistant. Given a document, your task is to generate some single questions to cover all key information of the document and answer them sequentially.'
-        prompt_user = f"Background:\n{docs}"
+        prompt_system = 'Ты — полезный ассистент. Тебе дан документ. Твоя задача — сформулировать несколько вопросов, охватывающих ключевую информацию документа, и последовательно ответить на них.'
+        prompt_user = f"Контекст:\n{docs}"
         
         sys_prompt = [{"role": "system", "content": prompt_system}]
         user_prompt = [{"role": "user", "content": prompt_user.replace(':\ ', ': ')}]
 
-        qa_lines = [f"Question: {q}\nAnswer: {a}" for q, a in zip(query, answer)]
+        qa_lines = [f"Вопрос: {q}\nОтвет: {a}" for q, a in zip(query, answer)]
         query_answer = "\n".join(qa_lines)
         assistant_prompt = [{"role": "assistant", "content": query_answer}]
         
@@ -1033,7 +1056,7 @@ class CLaRa(PreTrainedModel):
 
     def _blend_paraphrase_prompt(self, docs: str, answer: str) -> Tuple[int, str]:
         """Create paraphrase prompt for stage 1."""
-        prompt_system = 'You are a helpful assistant. Your task is follow the instructions to paraphrase the background information.'
+        prompt_system = 'Ты — полезный ассистент. Твоя задача — следовать инструкциям и перефразировать предложенный текст.'
         prompt_user = random.choice(PARAPHRASE_INSTRUCTIONS).format(docs=docs)
 
         sys_prompt = [{"role": "system", "content": prompt_system}]
@@ -1043,7 +1066,7 @@ class CLaRa(PreTrainedModel):
             prompt = self.decoder_tokenizer.apply_chat_template(
                 sys_prompt + user_prompt, 
                 tokenize=False, 
-                add_generation_prompt=True, 
+                add_generation_prompt=True,
                 enable_thinking=False
             )
             if answer is None:
@@ -1078,8 +1101,15 @@ class CLaRa(PreTrainedModel):
 
     def _blend_standard_prompt(self, docs: str, query: str, answer: str) -> Tuple[int, str]:
         """Create standard prompt for stage 1_2."""
-        prompt_system = 'You are a helpful assistant. Your task is to extract relevant information from provided documents and to answer to questions as briefly as possible.'
-        prompt_user = f"Background:\n{docs}\n\nQuestion:{query}"
+        prompt_system = 'Ты — полезный ассистент. Твоя задача — извлечь нужную информацию из предоставленных документов и ответить на вопрос максимально кратко.'
+        # --- Qwen2 patch: convert lists to strings ---
+        if isinstance(docs, list):
+            docs = "\n".join(docs)
+        if isinstance(query, list):
+            query = query[0] if query else ""
+        if isinstance(answer, list):
+            answer = answer[0] if answer else ""
+        prompt_user = f"Контекст:\n{docs}\n\nВопрос:{query}"
         
         sys_prompt = [{"role": "system", "content": prompt_system}]
         user_prompt = [{"role": "user", "content": prompt_user.replace(':\ ', ': ')}]
@@ -1088,7 +1118,7 @@ class CLaRa(PreTrainedModel):
             prompt = self.decoder_tokenizer.apply_chat_template(
                 sys_prompt + user_prompt, 
                 tokenize=False, 
-                add_generation_prompt=True, 
+                add_generation_prompt=True,
                 enable_thinking=False
             )
             if answer is None:
@@ -1126,8 +1156,8 @@ class CLaRa(PreTrainedModel):
         mem_tokens_str = ''.join(self.decoder_tokenizer.mem_tokens) + self.decoder_tokenizer.sep_token
         docs = mem_tokens_str * self.generation_top_k
         
-        prompt_system = 'You are a helpful assistant. Your task is to extract relevant information from provided documents and to answer to questions as briefly as possible.'
-        prompt_user = f"Background:\n{docs}\n\nQuestion:{query}"
+        prompt_system = 'Ты — полезный ассистент. Твоя задача — извлечь нужную информацию из предоставленных документов и ответить на вопрос максимально кратко.'
+        prompt_user = f"Контекст:\n{docs}\n\nВопрос:{query}"
         
         sys_prompt = [{"role": "system", "content": prompt_system}]
         user_prompt = [{"role": "user", "content": prompt_user.replace(':\ ', ': ')}]
@@ -1136,7 +1166,7 @@ class CLaRa(PreTrainedModel):
             prompt = self.decoder_tokenizer.apply_chat_template(
                 sys_prompt + user_prompt, 
                 tokenize=False, 
-                add_generation_prompt=True, 
+                add_generation_prompt=True,
                 enable_thinking=False
             )
             prompt_len = len(self.decoder_tokenizer.encode(prompt, add_special_tokens=False))
@@ -1222,8 +1252,10 @@ class CLaRa(PreTrainedModel):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str, *args, **kwargs):
         """Load model from pretrained checkpoint."""
-        # Load configuration
-        config = CLaRaConfig.from_pretrained(pretrained_model_name_or_path)
+        # Load config directly from json to avoid trust_remote_code prompt
+        # (CLaRaConfig has auto_map which triggers the check when using from_pretrained)
+        config_path = os.path.join(pretrained_model_name_or_path, "config.json")
+        config = CLaRaConfig.from_json_file(config_path)
         
         # Update config with kwargs
         for key, value in kwargs.items():
@@ -1275,8 +1307,11 @@ class CLaRa(PreTrainedModel):
                 adapters_path = os.path.join(pretrained_model_name_or_path, "adapters.pth")
     
             if os.path.exists(adapters_path):
+                print(f'[DEBUG] Loading adapters from: {adapters_path}')
                 adapters_state_dict = torch.load(adapters_path, map_location=map_location, weights_only=True)
+                print(f'[DEBUG] adapters.pth keys: {list(adapters_state_dict.keys())}')
                 model._load_adapters_from_state_dict(adapters_state_dict, peft_config, config)
+                print(f'[DEBUG] adapter_keys after load: {model.adapter_keys}')
             else:
                 warnings.warn(f'Adapters not found at {adapters_path}')
 
@@ -1316,14 +1351,47 @@ class CLaRa(PreTrainedModel):
             self._handle_query_reasoner_adapter_loading(adapters_state_dict, peft_config)
 
     def _load_adapter_from_state_dict(self, peft_config: LoraConfig, adapter_name: str, adapter_state_dict: Dict):
-        """Create adapter from state dict."""
+        """Create adapter from state dict with key-format-agnostic loading.
+
+        In transformers >=5.x, LoRA parameter names embed the adapter name:
+          model.layers.0.q_proj.lora_A.decoder_adapter.weight
+        But adapters.pth was saved with old PEFT format (no adapter name in key):
+          layers.0.q_proj.lora_A.weight
+        We use add_adapter to create the structure, then copy weights directly.
+        """
         print(f'Loading checkpoint adapter: {adapter_name}')
-        self.decoder.load_adapter(
-            peft_config=peft_config, 
-            adapter_name=adapter_name, 
-            adapter_state_dict=adapter_state_dict
-        )
+        self.decoder.add_adapter(peft_config, adapter_name)
         self.adapter_keys.append(adapter_name)
+
+        # Build lookup: normalized_key -> (name, param) for this adapter
+        # Normalize by stripping "model." prefix and the adapter name itself
+        def _norm(key: str) -> str:
+            for prefix in ("base_model.model.model.", "base_model.model.", "model."):
+                if key.startswith(prefix):
+                    key = key[len(prefix):]
+                    break
+            key = key.replace(f".{adapter_name}.", ".")
+            return key
+
+        model_params = {_norm(n): (n, p) for n, p in self.decoder.named_parameters()
+                        if adapter_name in n}
+
+        loaded, skipped = 0, 0
+        for saved_key, value in adapter_state_dict.items():
+            norm = _norm(saved_key)
+            if norm in model_params:
+                full_name, param = model_params[norm]
+                param.data.copy_(value.to(dtype=param.dtype, device=param.device))
+                loaded += 1
+            else:
+                skipped += 1
+
+        print(f'  Loaded {loaded}/{len(adapter_state_dict)} weights for {adapter_name}'
+              + (f', skipped {skipped}' if skipped else ''))
+        if skipped:
+            skipped_keys = [k for k in adapter_state_dict if _norm(k) not in model_params]
+            print(f'  Skipped keys: {skipped_keys}')
+
 
     def _handle_query_reasoner_adapter_loading(self, adapters_state_dict: Dict, peft_config: LoraConfig):
         """Handle special loading logic for query reasoner adapter."""
@@ -1654,7 +1722,27 @@ class CLaRa(PreTrainedModel):
         assert enc_input_ids.size(0) == dec_input_ids.size(0) * self.generation_top_k
             
         compressed_embs, _ = self.compress(enc_input_ids.to('cuda'), enc_attention_mask.to('cuda'))
+
+        # --- DEBUG compression quality ---
+        print(f"[DEBUG] compressed_embs shape={compressed_embs.shape}")
+        print(f"[DEBUG] compressed_embs norm={compressed_embs.norm(dim=-1).mean().item():.4f}, "
+              f"std={compressed_embs.std().item():.4f}")
+        # ---------------------------------
+
         inputs_embeds = self._replace_emb(compressed_embs, dec_input_ids.to('cuda'))
+
+        # --- DEBUG replacement ---
+        dec_ids_cpu = dec_input_ids[0].cpu()
+        mem0_id = self.decoder_tokenizer.mem_token_ids[0]
+        mem0_pos = (dec_ids_cpu == mem0_id).nonzero(as_tuple=True)[0]
+        mem0_pos_val = mem0_pos[0].item() if len(mem0_pos) > 0 else -1
+        orig_emb = self.decoder.get_input_embeddings()(dec_ids_cpu[:1].to('cuda'))
+        replaced_norm = inputs_embeds[0, mem0_pos_val].norm().item() if mem0_pos_val >= 0 else -1
+        orig_norm = orig_emb[0, 0].norm().item()
+        print(f"[DEBUG] MEM0 position in dec_input_ids: {mem0_pos_val}")
+        print(f"[DEBUG] Embedding norm at MEM0 pos after replace: {replaced_norm:.4f} "
+              f"(original token emb norm: {orig_norm:.4f})")
+        # -------------------------
         
         if 'decoder_adapter' in self.adapter_keys:
             self.decoder.set_adapter('decoder_adapter') 
@@ -1668,6 +1756,7 @@ class CLaRa(PreTrainedModel):
         )
 
         decoded = self.decoder_tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+
         
         if return_doc_embeddings:
             assert 'batch_size' in locals() and 'top_k' in locals()
@@ -1681,11 +1770,13 @@ class CLaRa(PreTrainedModel):
 if __name__ == '__main__':
     # Example configuration
     cfg = CLaRaConfig(
-        decoder_model_name='/mnt/ceph_rbd/model/Mistral-7B-Instruct-v0.2',
+        # decoder_model_name='t-tech/T-lite-it-1.0',
+        decoder_model_name='Qwen/Qwen3-0.6B',
         compr_model_name="mistral_trimmed",
         compr_rate=64,
         compr_n_layers=5,
-        compr_mlp_hidden_dim=8096,
+        # compr_mlp_hidden_dim=7168,
+        compr_mlp_hidden_dim=2048,
         compr_use_mlp=False, 
         lora=True,
         lora_compressor=True,

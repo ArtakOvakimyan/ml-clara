@@ -476,7 +476,7 @@ class SFTTrainer(ABC):
         
         # Determine if we should do generation evaluation
         eval_gen = False
-        if global_step % (args.eval_steps * 5) == 0 and args.do_eval_gen:
+        if global_step % args.eval_steps == 0 and args.do_eval_gen:
             eval_gen = True
         elif (num_update_steps_per_epoch and 
               global_step % num_update_steps_per_epoch == 0 and 
@@ -503,6 +503,7 @@ class SFTTrainer(ABC):
             "mse_loss_sum": 0.0,
             "samples": 0,
             "correct": 0,
+            "f1_sum": 0.0,
             "retrieval_recall_1": 0.0,
             "retrieval_recall_3": 0.0,
             "retrieval_recall_5": 0.0,
@@ -544,8 +545,9 @@ class SFTTrainer(ABC):
                 # Generation evaluation
                 if eval_gen:
                     predictions = self._generate_predictions(batch)
-                    correct = self._calculate_accuracy(predictions, batch["answers"])
+                    correct, f1_sum = self._calculate_accuracy(predictions, batch["answers"])
                     eval_metrics["correct"] += correct
+                    eval_metrics["f1_sum"] += f1_sum
                 
                 step_bar.update()
         
@@ -597,13 +599,18 @@ class SFTTrainer(ABC):
         else:
             return [""] * len(questions)
     
-    def _calculate_accuracy(self, predictions: List[str], answers: List[str]) -> int:
-        """Calculate accuracy for predictions."""
+    def _calculate_accuracy(self, predictions: List[str], answers: List[str]):
+        """Calculate accuracy and F1 for predictions."""
         correct = 0
+        f1_sum = 0.0
         for pred, ans in zip(predictions, answers):
+            # Qwen2 patch: ans может быть списком
+            if isinstance(ans, list):
+                ans = ans[0] if ans else ''
             if EvaluationMetrics.cover_exact_match_score(pred, ans):
                 correct += 1
-        return correct
+            f1_sum += EvaluationMetrics.f1_score(pred, ans)
+        return correct, f1_sum
     
     def _calculate_final_eval_metrics(self, eval_metrics: Dict[str, float], eval_gen: bool) -> Dict[str, float]:
         """Calculate final evaluation metrics."""
@@ -615,7 +622,8 @@ class SFTTrainer(ABC):
             final_metrics["eval_mse_loss"] = eval_metrics["mse_loss_sum"] / eval_metrics["samples"]
             
             if eval_gen:
-                final_metrics["eval_acc"] = eval_metrics["correct"] / eval_metrics["samples"]
+                final_metrics["acc"] = eval_metrics["correct"] / eval_metrics["samples"]
+                final_metrics["f1"] = eval_metrics["f1_sum"] / eval_metrics["samples"]
         
         # Retrieval metrics
         if eval_metrics["retrieval_samples"] > 0:
